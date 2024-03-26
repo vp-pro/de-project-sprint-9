@@ -1,0 +1,200 @@
+# Check: post to API redis Yandex Cloud to test if the DB is ready
+curl -X POST https://redis-data-service.sprint9.tgcloudenv.ru/test_redis \
+-H 'Content-Type: application/json; charset=utf-8' \
+--data-binary @- << EOF
+{
+    "redis":{
+        "host": "rc1d-jpvuacrvqk0n7bou.mdb.yandexcloud.net",
+        "port": 6380,
+        "password": "adminadmin"
+    }
+}
+EOF
+
+
+#### Load: USERS table
+curl -X POST https://redis-data-service.sprint9.tgcloudenv.ru/load_users \
+-H 'Content-Type: application/json; charset=utf-8' \
+--data-binary @- << EOF
+{
+    "redis":{
+        "host": "rc1d-jpvuacrvqk0n7bou.mdb.yandexcloud.net",
+        "port": 6380,
+        "password": "adminadmin"
+    }
+}
+EOF
+
+
+# Load: RESTAURANTS table
+curl -X POST https://redis-data-service.sprint9.tgcloudenv.ru/load_restaurants \
+-H 'Content-Type: application/json; charset=utf-8' \
+--data-binary @- << EOF
+{
+    "redis":{
+        "host": "rc1d-jpvuacrvqk0n7bou.mdb.yandexcloud.net",
+        "port": 6380,
+        "password": "adminadmin"
+    }
+}
+EOF
+
+
+
+KAFKA
+
+
+# load metadata
+docker run \
+    -it \
+    --network=host \
+    -v "/home/vp/CA.pem:/data/CA.pem" \
+    edenhill/kcat:1.7.1 \
+    -b rc1a-k77eie3s6eb3e9ib.mdb.yandexcloud.net:9091 \
+    -X security.protocol=SASL_SSL \
+    -X sasl.mechanisms=SCRAM-SHA-512 \
+    -X sasl.username=producer_consumer \
+    -X sasl.password="adminadmin" \
+    -X ssl.ca.location=/data/CA.pem \
+    -L
+
+
+# Read data: consumer
+docker run \
+    -it \
+    --name "kcat" \
+    --network=host \
+    --rm \
+    -v "/home/vp/CA.pem:/data/CA.pem" \
+    edenhill/kcat:1.7.1 -b rc1a-k77eie3s6eb3e9ib.mdb.yandexcloud.net:9091 \
+    -X security.protocol=SASL_SSL \
+    -X sasl.mechanisms=SCRAM-SHA-512 \
+    -X sasl.username=producer_consumer \
+    -X sasl.password="adminadmin" \
+    -X ssl.ca.location=/data/CA.pem \
+    -t order-service_orders \
+    -C \
+    -o beginning
+
+
+
+
+# kafka start out
+docker run \
+    -it \
+    --name "kcat_stg-service-orders" \
+    --network=host \
+    --rm \
+    -v "/home/vp/CA.pem:/data/CA.pem" \
+    edenhill/kcat:1.7.1 -b rc1a-k77eie3s6eb3e9ib.mdb.yandexcloud.net:9091 \
+    -X security.protocol=SASL_SSL \
+    -X sasl.mechanisms=SCRAM-SHA-512 \
+    -X sasl.username=producer_consumer \
+    -X sasl.password="adminadmin" \
+    -X ssl.ca.location=/data/CA.pem \
+    -t stg-service-orders \
+    -C \
+    -o beginning
+
+
+
+
+# test kafka
+curl -X POST https://order-gen-service.sprint9.tgcloudenv.ru/test_kafka \
+-H 'Content-Type: application/json; charset=utf-8' \
+--data '{
+    "student": "c19-panferov-vladislav",
+    "kafka_connect":{
+        "host": "rc1a-k77eie3s6eb3e9ib.mdb.yandexcloud.net",
+        "port": 9091,
+        "topic": "order-service_orders",
+        "producer_name": "producer_consumer",
+        "producer_password": "adminadmin"
+    }
+}'
+
+
+
+# register kafka
+curl -X POST https://order-gen-service.sprint9.tgcloudenv.ru/register_kafka \
+-H 'Content-Type: application/json; charset=utf-8' \
+--data '{
+    "student": "c19-panferov-vladislav",
+    "kafka_connect":{
+        "host": "rc1a-k77eie3s6eb3e9ib.mdb.yandexcloud.net",
+        "port": 9091,
+        "topic": "order-service_orders",
+        "producer_name": "producer_consumer",
+        "producer_password": "adminadmin"
+    }
+}'
+
+
+-----------------------------------------------------
+# send post request to cloud postgres
+curl -X POST https://postgres-check-service.sprint9.tgcloudenv.ru/init_schemas \
+-H 'Content-Type: application/json; charset=utf-8' \
+--data-binary @- << EOF
+{
+  "student": "c19-panferov-vladislav",
+  "pg_settings": {
+    "host": "rc1b-o1pgcksjwcolgghp.mdb.yandexcloud.net",
+    "port": 6432,
+    "dbname": "sprint9dwh",
+    "username": "db_user",
+    "password": "adminadmin"
+  }
+}
+EOF
+
+--------------------------------------
+K8s / Helm
+
+
+
+# running helm deployments
+helm ls -a -n c19-panferov-vladislav
+
+
+# uninstall deployemnt
+helm delete stg-service -n c19-panferov-vladislav
+helm delete dds-service -n c19-panferov-vladislav
+helm delete cdm-service -n c19-panferov-vladislav
+
+
+# Prepare kubeconfig: write the path to the kubeconfig file to a variable
+export KUBECONFIG=/home/vp/.kube/config
+
+
+
+# STG
+cd /home/vp/projects/yandex-de/de-project-sprint-9/solution/service_stg
+docker build . -t cr.yandex/crp3b4rqeb3klngul67m/stg_service:v2024-03-25-r2 --platform linux/amd64
+docker push cr.yandex/crp3b4rqeb3klngul67m/stg_service:v2024-03-25-r2
+# give access for pulling images
+# change tag in helm
+cd /home/vp/projects/yandex-de/de-project-sprint-9/solution/service_stg
+helm install stg-service app -n c19-panferov-vladislav
+kubectl get pods
+
+
+# DDS
+cd /home/vp/projects/yandex-de/de-project-sprint-9/solution/service_dds
+docker build . -t cr.yandex/crp3b4rqeb3klngul67m/dds_service:v2024-03-25-r1 --platform linux/amd64
+docker push cr.yandex/crp3b4rqeb3klngul67m/dds_service:v2024-03-25-r1
+# give access for pulling images
+# change tag in helm
+cd /home/vp/projects/yandex-de/de-project-sprint-9/solution/service_dds
+helm install dds-service app -n c19-panferov-vladislav
+kubectl get pods
+
+
+# CDM
+cd /home/vp/projects/yandex-de/de-project-sprint-9/solution/service_cdm
+docker build . -t cr.yandex/crp3b4rqeb3klngul67m/cdm_service:v2024-03-25-r1 --platform linux/amd64
+docker push cr.yandex/crp3b4rqeb3klngul67m/cdm_service:v2024-03-25-r1
+# give acess for pulling images
+# change tag in helm
+cd /home/vp/projects/yandex-de/de-project-sprint-9/solution/service_cdm
+helm install cdm-service app -n c19-panferov-vladislav
+kubectl get pods
